@@ -10,6 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <signal.h>
+#include <time.h>
 
 #include "err.h"
 #include "common.h"
@@ -22,6 +23,16 @@ uint16_t read_port(char const *string) {
         fatal("%s is not a valid port number", string);
     }
     return (uint16_t) port;
+}
+
+time_t read_time(char const *string) {
+    char *endptr;
+    errno = 0;
+    time_t number = strtoul(string, &endptr, 10);
+    if (errno != 0 || *endptr != 0) {
+        fatal("%s is not a valid number", string);
+    }
+    return number;
 }
 
 size_t read_size(char const *string) {
