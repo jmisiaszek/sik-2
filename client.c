@@ -16,7 +16,7 @@
 
 char *hostname;
 uint16_t port;
-int connection_type = -1;
+int family = AF_UNSPEC;
 char game_side;
 bool is_automatic = false;
 
@@ -43,9 +43,9 @@ void parse_args(int argc, char *argv[]) {
             port_set = true;
             i++;
         } else if (strcmp(argv[i], "-4") == 0) {
-            connection_type = 4;
+            family = AF_INET;
         } else if (strcmp(argv[i], "-6") == 0) {
-            connection_type = 6;
+            family = AF_INET6;
         } else if (strcmp(argv[i], "-a") == 0) {
             is_automatic = true;
         } else if (strcmp(argv[i], "-N") == 0) {
@@ -69,11 +69,29 @@ void parse_args(int argc, char *argv[]) {
     }
 }
 
+int prepare_connection() {
+    // Get server address info.
+    struct sockaddr_storage server_address = get_server_address(hostname, port, family);
+    family = server_address.ss_family;
+
+    // Create socket.
+    int socket_fd = socket(family, SOCK_STREAM, 0);
+    if (socket_fd < 0) {
+        syserr("cannot create a socket");
+    }
+
+    if (connect(socket_fd, (struct sockaddr *) &server_address,
+                (socklen_t) sizeof(server_address)) < 0) {
+        syserr("cannot connect to the server");
+    }
+
+    printf("connected to %s:%" PRIu16 "\n", hostname, port);
+
+    return socket_fd;
+}
+
 int main(int argc, char *argv[]) {
     parse_args(argc, argv);
-    printf("Hostname: %s\n", hostname);
-    printf("Port: %" PRIu16 "\n", port);
-    printf("Connection type: %d\n", connection_type);
-    printf("Game side: %c\n", game_side);
-    printf("Is automatic: %d\n", is_automatic);
+    
+    int socket_fd = prepare_connection();
 }

@@ -45,7 +45,44 @@ size_t read_size(char const *string) {
     return number;
 }
 
-struct sockaddr_in get_server_address(char const *host, uint16_t port) {
+struct sockaddr_storage get_server_address(char const *host, uint16_t port, int family) {
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = family; // Unspecified address family.
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+    struct addrinfo *address_result;
+    int errcode = getaddrinfo(host, NULL, &hints, &address_result);
+    if (errcode != 0) {
+        fatal("getaddrinfo: %s", gai_strerror(errcode));
+    }
+
+    struct sockaddr_storage send_address;
+    memset(&send_address, 0, sizeof(struct sockaddr_storage));
+
+    if (address_result->ai_family == AF_INET) {
+        struct sockaddr_in *addr4 = (struct sockaddr_in *)&send_address;
+        addr4->sin_family = AF_INET; // IPv4
+        addr4->sin_addr.s_addr = 
+            ((struct sockaddr_in *)(address_result->ai_addr))->sin_addr.s_addr;
+        addr4->sin_port = htons(port);
+    } else if (address_result->ai_family == AF_INET6) {
+        struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)&send_address;
+        addr6->sin6_family = AF_INET6; // IPv6
+        addr6->sin6_addr = 
+            ((struct sockaddr_in6 *)(address_result->ai_addr))->sin6_addr;
+        addr6->sin6_port = htons(port);
+    } else {
+        fatal("Unsupported address family: %d", address_result->ai_family);
+    }
+
+    freeaddrinfo(address_result);
+
+    return send_address;
+}
+
+struct sockaddr_in get_server_address_ipv4(char const *host, uint16_t port) {
     struct addrinfo hints;
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_INET; // IPv4

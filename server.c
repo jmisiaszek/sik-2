@@ -15,9 +15,17 @@
 #include "err.h"
 #include "common.h"
 
-uint16_t port = -1;
+#define QUEUE_LENGTH 5
+
+uint16_t port = 0;
 char *game_file = NULL;
 time_t timeout = 5;
+
+//  TODO: implement SIGINT handling.
+/*static void catch_int(int sig) {
+    finish = true;
+    printf("signal %d catched so no new connections will be accepted\n", sig);
+}*/
 
 // Function to parse command line arguments.
 void parse_args(int argc, char *argv[]) {
@@ -48,9 +56,75 @@ void parse_args(int argc, char *argv[]) {
     }
 }
 
+int prepare_connection_ipv4() {
+    // Create a socket.
+    int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (socket_fd < 0) {
+        syserr("cannot create a socket");
+    }
+
+    // Bind the socket to a concrete address.
+    struct sockaddr_in server_address;
+    memset(&server_address, 0, sizeof(server_address));
+    server_address.sin_family = AF_INET; // IPv4
+    server_address.sin_addr.s_addr = htonl(INADDR_ANY); // Listening on all interfaces.
+    server_address.sin_port = htons(port); // If port is 0, the kernel will choose a port.
+
+    if (bind(socket_fd, (struct sockaddr *) &server_address, (socklen_t) sizeof server_address) < 0) {
+        syserr("bind");
+    }
+
+    // Switch the socket to listening.
+    if (listen(socket_fd, QUEUE_LENGTH) < 0) {
+        syserr("listen");
+    }
+
+    // Find out what port the server is actually listening on.
+    socklen_t lenght = (socklen_t) sizeof server_address;
+    if (getsockname(socket_fd, (struct sockaddr *) &server_address, &lenght) < 0) {
+        syserr("getsockname");
+    }
+
+    printf("listening on port %" PRIu16 "\n", ntohs(server_address.sin_port));
+    return socket_fd;
+}
+
+int prepare_connection_ipv6() {
+    // Create a socket.
+    int socket_fd = socket(AF_INET6, SOCK_STREAM, 0);
+    if (socket_fd < 0) {
+        syserr("cannot create a socket");
+    }
+
+    // Bind the socket to a concrete address.
+    struct sockaddr_in6 server_address;
+    memset(&server_address, 0, sizeof(server_address));
+    server_address.sin6_family = AF_INET6; // IPv6
+    server_address.sin6_addr = in6addr_any; // Listening on all interfaces.
+    server_address.sin6_port = htons(port); // If port is 0, the kernel will choose a port.
+
+    if (bind(socket_fd, (struct sockaddr *) &server_address, (socklen_t) sizeof server_address) < 0) {
+        syserr("bind");
+    }
+
+    // Switch the socket to listening.
+    if (listen(socket_fd, QUEUE_LENGTH) < 0) {
+        syserr("listen");
+    }
+
+    // Find out what port the server is actually listening on.
+    struct sockaddr_in6 server_address_actual;
+    socklen_t length = sizeof(server_address_actual);
+    if (getsockname(socket_fd, (struct sockaddr *) &server_address_actual, &length) < 0) {
+        syserr("getsockname");
+    }
+
+    printf("listening on port %" PRIu16 "\n", ntohs(server_address_actual.sin6_port));
+    return socket_fd;
+}
+
 int main(int argc, char *argv[]) {
     parse_args(argc, argv);
-    printf("Port: %d\n", port);
-    printf("Timeout: %ld\n", timeout);
-    printf("Game file: %s\n", game_file);
+    
+    // TODO: install_signal_handler(SIGINT, catch_int, SA_RESTART);
 }
