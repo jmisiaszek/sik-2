@@ -11,21 +11,33 @@
 #include <arpa/inet.h>
 #include <time.h>
 #include <stdbool.h>
+#include <poll.h>
 
 #include "err.h"
 #include "common.h"
 
 #define QUEUE_LENGTH 5
 
+typedef struct card_t {
+    char num;
+    char col;
+} card_t;
+
+typedef struct game_desc_t {
+    int game_type;
+    char starting_player;
+    card_t cards[4][13];
+} game_desc_t;
+
+const int MAX_CONNECTIONS = 5; // Server + 4 players.
+
 uint16_t port = 0;
 char *game_file = NULL;
 time_t timeout = 5;
 
-//  TODO: implement SIGINT handling.
-/*static void catch_int(int sig) {
-    finish = true;
-    printf("signal %d catched so no new connections will be accepted\n", sig);
-}*/
+int no_of_games;
+game_desc_t *game_desc;
+
 
 // Function to parse command line arguments.
 void parse_args(int argc, char *argv[]) {
@@ -54,6 +66,56 @@ void parse_args(int argc, char *argv[]) {
     if (!file_set) {
         fatal("No game file specified.\n");
     }
+}
+
+int count_lines() {
+    FILE *file = fopen(game_file, "r");
+    if (file == NULL) {
+        syserr("Failed to open game description file.");
+    }
+
+    int line_count = 0;
+    char ch;
+
+    // Count the number of newline characters
+    while ((ch = fgetc(file)) != EOF) {
+        if (ch == '\n') {
+            line_count++;
+        }
+    }
+
+    fclose(file);
+
+    return line_count;
+}
+
+void parse_game_file() {
+    no_of_games = count_lines() / 5;
+    
+    game_desc = malloc(no_of_games * sizeof(game_desc_t));
+
+    FILE *file = fopen(game_file, "r");
+    if (file == NULL) {
+        syserr("Failed to open game description file.");
+    }
+
+    for(int i = 0; i < no_of_games; i++) {
+        game_desc[i].game_type = (int)(fgetc(file) - '0');
+        game_desc[i].starting_player = fgetc(file);
+        fgetc(file); // Skip the newline character.
+        for (int j = 0; j < 4; j++) {
+            for(int k = 0; k < 13; k++) {
+                game_desc[i].cards[j][k].num = fgetc(file);
+                if (game_desc[i].cards[j][k].num == '1') {
+                    fgetc(file); // Skip the '0' character.
+                }
+                game_desc[i].cards[j][k].col = fgetc(file);
+            }
+            fgetc(file); // Skip the newline character.
+        }
+    }
+
+    fclose(file);
 }
 
 int prepare_connection() {
@@ -92,14 +154,29 @@ int prepare_connection() {
         syserr("getsockname");
     }
 
-    printf("listening on port %" PRIu16 "\n", ntohs(server_address_actual.sin6_port));
+    /*DEBUG*/printf("listening on port %" PRIu16 "\n", ntohs(server_address_actual.sin6_port));
     return socket_fd;
 }
 
 int main(int argc, char *argv[]) {
     parse_args(argc, argv);
-    
-    // TODO: install_signal_handler(SIGINT, catch_int, SA_RESTART);
 
-    int socket_fd = prepare_connection();
+    parse_game_file();
+
+    int server_fd = prepare_connection();
+
+    /*while(1) {
+        struct sockaddr_in client_address;
+        int client_fd = accept(server_fd, (struct sockaddr *) &client_address,
+                               &((socklen_t){sizeof(client_address)}));
+        if (client_fd < 0) {
+            syserr("accept");
+        }
+
+        char const *client_ip = inet_ntoa(client_address.sin_addr);
+        uint16_t client_port = ntohs(client_address.sin_port);
+        printf("accepted connection from %s:%" PRIu16 "\n", client_ip, client_port);
+
+        close(client_fd);
+    }*/
 }
