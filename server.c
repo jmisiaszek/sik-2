@@ -56,44 +56,17 @@ void parse_args(int argc, char *argv[]) {
     }
 }
 
-int prepare_connection_ipv4() {
-    // Create a socket.
-    int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (socket_fd < 0) {
-        syserr("cannot create a socket");
-    }
-
-    // Bind the socket to a concrete address.
-    struct sockaddr_in server_address;
-    memset(&server_address, 0, sizeof(server_address));
-    server_address.sin_family = AF_INET; // IPv4
-    server_address.sin_addr.s_addr = htonl(INADDR_ANY); // Listening on all interfaces.
-    server_address.sin_port = htons(port); // If port is 0, the kernel will choose a port.
-
-    if (bind(socket_fd, (struct sockaddr *) &server_address, (socklen_t) sizeof server_address) < 0) {
-        syserr("bind");
-    }
-
-    // Switch the socket to listening.
-    if (listen(socket_fd, QUEUE_LENGTH) < 0) {
-        syserr("listen");
-    }
-
-    // Find out what port the server is actually listening on.
-    socklen_t lenght = (socklen_t) sizeof server_address;
-    if (getsockname(socket_fd, (struct sockaddr *) &server_address, &lenght) < 0) {
-        syserr("getsockname");
-    }
-
-    printf("listening on port %" PRIu16 "\n", ntohs(server_address.sin_port));
-    return socket_fd;
-}
-
-int prepare_connection_ipv6() {
-    // Create a socket.
+int prepare_connection() {
+    // Create an IPv6 socket.
     int socket_fd = socket(AF_INET6, SOCK_STREAM, 0);
     if (socket_fd < 0) {
         syserr("cannot create a socket");
+    }
+    
+    // Allow the socket to accept both IPv4 and IPv6 connections
+    int option = 0;
+    if (setsockopt(socket_fd, IPPROTO_IPV6, IPV6_V6ONLY, &option, sizeof(option)) < 0) {
+        syserr("setsockopt");
     }
 
     // Bind the socket to a concrete address.
@@ -127,4 +100,6 @@ int main(int argc, char *argv[]) {
     parse_args(argc, argv);
     
     // TODO: install_signal_handler(SIGINT, catch_int, SA_RESTART);
+
+    int socket_fd = prepare_connection();
 }
