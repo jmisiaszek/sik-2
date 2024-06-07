@@ -178,35 +178,116 @@ int main(int argc, char *argv[]) {
         printf("%ld %s", msg_len, msg);
 
         free(msg);
+
+        for (int g = 0; g < no_of_games; g++) {
         
-        msg = malloc(BUF_SIZE + 1);
-        memset(msg, 0, BUF_SIZE + 1);
-        strcat(msg, "DEAL");
-        msg[strlen(msg)] = game_desc[0].game_type;
-        msg[strlen(msg)] = game_desc[0].starting_player;
-        
-        for (int i = 0; i < 13; i++) {
-            msg[strlen(msg)] = game_desc[0].cards[0][i].num;
-            if (msg[strlen(msg) - 1] == '1') {
-                msg[strlen(msg)] = '0';
+            msg = malloc(BUF_SIZE + 1);
+            memset(msg, 0, BUF_SIZE + 1);
+            strcat(msg, "DEAL");
+            msg[strlen(msg)] = game_desc[g].game_type;
+            msg[strlen(msg)] = game_desc[g].starting_player;
+            
+            for (int i = 0; i < 13; i++) {
+                msg[strlen(msg)] = game_desc[g].cards[0][i].num;
+                if (msg[strlen(msg) - 1] == '1') {
+                    msg[strlen(msg)] = '0';
+                }
+                msg[strlen(msg)] = game_desc[g].cards[0][i].col;
+                //printf("%d %ld %c\n", i, strlen(msg), msg[strlen(msg) - 1]);
             }
-            msg[strlen(msg)] = game_desc[0].cards[0][i].col;
-            printf("%d %ld %c\n", i, strlen(msg), msg[strlen(msg) - 1]);
-        }
-        strcat(msg, "\r\n");
-        msg_len = strlen(msg);
-        printf("%ld %s", msg_len, msg);
+            strcat(msg, "\r\n");
+            msg_len = strlen(msg);
+            printf("%ld %s", msg_len, msg);
 
-        ssize_t written_length = writen(client_fd, msg, msg_len);
-        if (written_length < 0) {
-            syserr("writen");
-        }
-        else if ((size_t) written_length != msg_len) {
-            fatal("incomplete writen");
-        }
-        
-        getchar();
+            ssize_t written_length = writen(client_fd, msg, msg_len);
+            if (written_length < 0) {
+                syserr("writen");
+            }
+            else if ((size_t) written_length != msg_len) {
+                fatal("incomplete writen");
+            }
+            free(msg);
 
+            for (int i = 1; i <= 13; i++) {
+                msg = malloc(BUF_SIZE);
+                memset(msg, 0, BUF_SIZE);
+                strcat(msg, "TRICK");
+                msg_len = strlen(msg);
+                sprintf(msg + msg_len, "%d", i);
+                strcat(msg, "2D\r\n");
+                msg_len = strlen(msg);
+
+                printf("%ld %s", msg_len, msg);
+
+                written_length = writen(client_fd, msg, msg_len);
+                if (written_length < 0) {
+                    syserr("writen");
+                }
+                else if ((size_t) written_length != msg_len) {
+                    fatal("incomplete writen");
+                }
+                free(msg);
+
+                printf("Trick %d: ", i);
+                msg = read_msg(client_fd);
+                printf("%ld %s", strlen(msg), msg);
+
+                free(msg);
+
+                msg = malloc(BUF_SIZE);
+                memset(msg, 0, BUF_SIZE);
+                strcat(msg, "TAKEN");
+                msg_len = strlen(msg);
+                sprintf(msg + msg_len, "%d", i);
+                strcat(msg, "2D2D2D2D\r\n");
+                msg_len = strlen(msg);
+
+                printf("%s", msg);
+
+                written_length = writen(client_fd, msg, msg_len);
+                if (written_length < 0) {
+                    syserr("writen");
+                }
+                else if ((size_t) written_length != msg_len) {
+                    fatal("incomplete writen");
+                }
+                free(msg);
+            }
+
+            msg = malloc(BUF_SIZE);
+            memset(msg, 0, BUF_SIZE);
+            strcat(msg, "SCOREN10E10S10W10\r\n");
+            msg_len = strlen(msg);
+
+            printf("%s", msg);
+
+            written_length = writen(client_fd, msg, msg_len);
+            if (written_length < 0) {
+                syserr("writen");
+            }
+            else if ((size_t) written_length != msg_len) {
+                fatal("incomplete writen");
+            }
+            free(msg);
+
+            msg = malloc(BUF_SIZE);
+            memset(msg, 0, BUF_SIZE);
+            strcat(msg, "TOTALN10E10S10W10\r\n");
+            msg_len = strlen(msg);
+
+            printf("%s", msg);
+
+            written_length = writen(client_fd, msg, msg_len);
+            if (written_length < 0) {
+                syserr("writen");
+            }
+            else if ((size_t) written_length != msg_len) {
+                fatal("incomplete writen");
+            }
+            free(msg);
+        }
+
+        printf("closing connection from %s:%" PRIu16 "\n", client_ip, client_port);
         close(client_fd);
     }
 
