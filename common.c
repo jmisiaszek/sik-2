@@ -130,6 +130,25 @@ struct sockaddr_in6 get_server_address_ipv6(char const *host, uint16_t port) {
     return server_address;
 }
 
+char *read_msg(int socket_fd) {
+    char *msg = malloc((1 + BUF_SIZE) * sizeof(char));
+    memset(msg, 0, (1 + BUF_SIZE) * sizeof(char));
+    int ptr = 0;
+
+    do {
+        ssize_t read_length = readn(socket_fd, msg + ptr, 1);
+        if (read_length < 0) {
+            syserr("readn");
+        }
+        else if (read_length == 0) {
+            syserr("Server closed the connection.");
+        }
+        ptr += read_length;
+    } while (ptr < BUF_SIZE && msg[ptr - 1]!= '\n');
+
+    return msg;
+}
+
 // Following two functions come from Stevens' "UNIX Network Programming" book.
 // Read n bytes from a descriptor. Use in place of read() when fd is a stream socket.
 ssize_t readn(int fd, void *vptr, size_t n) {

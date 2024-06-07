@@ -20,6 +20,10 @@ int family = AF_UNSPEC;
 char game_side;
 bool is_automatic = false;
 
+char game_type;
+chat starting_player;
+card_t cards[13];
+
 // Function to parse command line arguments.
 void parse_args(int argc, char *argv[]) {
     // Necessary arguments to be passed.
@@ -85,13 +89,80 @@ int prepare_connection() {
         syserr("cannot connect to the server");
     }
 
-    printf("connected to %s:%" PRIu16 "\n", hostname, port);
+    /*DEBUG*/printf("connected to %s:%" PRIu16 "\n", hostname, port);
 
     return socket_fd;
+}
+
+int handshake(int socket_fd) {
+    // Preparing and sending IAM message.
+    size_t msg_len = 6;
+    char *msg = malloc((msg_len + 1) * sizeof(char));
+    memset(msg, 0, (msg_len + 1) * sizeof(char));
+    strcpy(msg, "IAM");
+    msg[3] = game_side;
+    strcat(msg, "\r\n");
+    // TODO: Raport.
+
+    ssize_t written_length = writen(socket_fd, msg, msg_len);
+    if (written_length < 0) {
+        syserr("writen");
+    }
+    else if ((size_t) written_length != msg_len) {
+        fatal("incomplete writen");
+    }
+    free(msg);
+
+    return get_game_info(socket_fd);
+}
+
+int get_game_info(int socket_fd) {
+    // Receiving DEAL message.
+    msg = read_msg(socket_fd);
+    msg_len = strlen(msg);
+    
+    // TODO: Raport.
+
+    if (msg_len < 2 || msg[msg_len - 2] != '\r' || msg[msg_len - 1] != '\n') {
+        free(msg);
+        return get_game_info(socket_fd);
+    } else {
+        if (strncmp(msg, "BUSY", 4) == 0) {
+            return 1;
+        } else if (strncmp(msg, "DEAL", 4) == 0) {
+            // Fill game data.
+            game_type = msg[4];
+            starting_player = msg[5];
+            size_t ptr = 5;
+            for (int i = 0; i < 13; i++) {
+                cards[i].num = msg[++ptr];
+                if (msg[ptr] == '1') {
+                    ptr++;
+                }
+                cards[i].col = msg[++ptr];
+            }
+
+            return 0;
+        } else {
+            return get_game_info(socket_fd);
+        }
+    }
+}
+
+void auto_play(int socket_fd) {
+
+}
+
+void manual_play(int socket_fd) {
+
 }
 
 int main(int argc, char *argv[]) {
     parse_args(argc, argv);
     
     int socket_fd = prepare_connection();
+
+    handshake(socket_fd);
+
+
 }

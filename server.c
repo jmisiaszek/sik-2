@@ -18,13 +18,8 @@
 
 #define QUEUE_LENGTH 5
 
-typedef struct card_t {
-    char num;
-    char col;
-} card_t;
-
 typedef struct game_desc_t {
-    int game_type;
+    char game_type;
     char starting_player;
     card_t cards[4][13];
 } game_desc_t;
@@ -100,7 +95,7 @@ void parse_game_file() {
     }
 
     for(int i = 0; i < no_of_games; i++) {
-        game_desc[i].game_type = (int)(fgetc(file) - '0');
+        game_desc[i].game_type = fgetc(file);
         game_desc[i].starting_player = fgetc(file);
         fgetc(file); // Skip the newline character.
         for (int j = 0; j < 4; j++) {
@@ -165,7 +160,8 @@ int main(int argc, char *argv[]) {
 
     int server_fd = prepare_connection();
 
-    /*while(1) {
+    // This part is for testing client app.
+    while(1) {
         struct sockaddr_in client_address;
         int client_fd = accept(server_fd, (struct sockaddr *) &client_address,
                                &((socklen_t){sizeof(client_address)}));
@@ -177,6 +173,42 @@ int main(int argc, char *argv[]) {
         uint16_t client_port = ntohs(client_address.sin_port);
         printf("accepted connection from %s:%" PRIu16 "\n", client_ip, client_port);
 
+        char *msg = read_msg(client_fd);
+        size_t msg_len = strlen(msg);
+        printf("%ld %s", msg_len, msg);
+
+        free(msg);
+        
+        msg = malloc(BUF_SIZE + 1);
+        memset(msg, 0, BUF_SIZE + 1);
+        strcat(msg, "DEAL");
+        msg[strlen(msg)] = game_desc[0].game_type;
+        msg[strlen(msg)] = game_desc[0].starting_player;
+        
+        for (int i = 0; i < 13; i++) {
+            msg[strlen(msg)] = game_desc[0].cards[0][i].num;
+            if (msg[strlen(msg) - 1] == '1') {
+                msg[strlen(msg)] = '0';
+            }
+            msg[strlen(msg)] = game_desc[0].cards[0][i].col;
+            printf("%d %ld %c\n", i, strlen(msg), msg[strlen(msg) - 1]);
+        }
+        strcat(msg, "\r\n");
+        msg_len = strlen(msg);
+        printf("%ld %s", msg_len, msg);
+
+        ssize_t written_length = writen(client_fd, msg, msg_len);
+        if (written_length < 0) {
+            syserr("writen");
+        }
+        else if ((size_t) written_length != msg_len) {
+            fatal("incomplete writen");
+        }
+        
+        getchar();
+
         close(client_fd);
-    }*/
+    }
+
+    free(game_desc);
 }
