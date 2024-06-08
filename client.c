@@ -317,11 +317,13 @@ static int get_game_info(int socket_fd) {
             if(!is_automatic) {
                 user_interface(msg);
             }
-
+            free(msg);
             return 0;
         } else {
+            free(msg);
             return get_game_info(socket_fd);
         }
+        
     }
 }
 
@@ -791,6 +793,7 @@ int main(int argc, char *argv[]) {
             if (read_length < 0) {
                 syserr("recv");
             } else if (read_length == 0) {
+                free(temp);
                 close(socket_fd);
                 exit(0);
             }
