@@ -12,9 +12,14 @@
 #include <stdbool.h>
 #include <time.h>
 #include <sys/time.h>
+#include <pthread.h>
+#include <poll.h>
+#include <termios.h>
 
 #define IAM_LEN 6
 #define TRICK_LEN 10
+#define NO_CARDS 13
+#define NO_PLAYERS 4
 
 #include "err.h"
 #include "common.h"
@@ -29,7 +34,13 @@ bool is_automatic = false;
 // Game data.
 char game_type;
 char starting_player;
-card_t cards[13];
+card_t cards[NO_CARDS];
+
+// Helping data for communication with user.
+int sockfd;
+int trick_num;
+card_t tricks[NO_CARDS + 3][NO_PLAYERS];
+bool is_finished = false;
 
 // Function to parse command line arguments.
 static void parse_args(int argc, char *argv[]) {
@@ -102,6 +113,7 @@ static int prepare_connection() {
     return socket_fd;
 }
 
+// Function to print raport about exchanged messages.
 static void raport(int socket_fd, char *msg, bool from_server) {
     // Get local IP address and port
     struct sockaddr_in local_address;
@@ -151,13 +163,135 @@ static void raport(int socket_fd, char *msg, bool from_server) {
     msg[strlen(msg)] = '\r';
 }
 
+// Function to print received message to the user.
+static void user_interface(char *msg) {
+    // Print BUSY message.
+    if (strncmp(msg, "BUSY", 4) == 0) {
+        char places[3];
+        int place = 0;
+        for (int i = strlen("BUSY"); msg[i] != '\r'; i++) {
+            places[place++] = msg[i];
+        }
+        printf("%s", msg);
+        printf("Place busy, list of busy places received: ");
+        for (int i = 0; i < place - 1; i++) {
+            printf("%c, ", places[i]);
+        }
+        printf("%c.\n", places[place - 1]);
+    }
+    // Print DEAL message.
+    else if (strncmp(msg, "DEAL", 4) == 0) {
+        printf("%s", msg);
+        printf("New deal %c: staring place %c, your cards: ", game_side, starting_player);
+        for(int i = 0; i < NO_CARDS - 1; i++) {
+            printf("%c", cards[i].num);
+            if (cards[i].num == '1') {
+                printf("0");
+            }
+            printf("%c, ", cards[i].col);
+        }
+        printf("%c", cards[NO_CARDS - 1].num);
+        if (cards[NO_CARDS - 1].num == '1') {
+            printf("0");
+        }
+        printf("%c.\n", cards[NO_CARDS - 1].col);
+    }
+    // Print WRONG message.
+    else if (strncmp(msg, "WRONG", 5) == 0) {
+        printf("%s", msg);
+        int ptr = strlen("WRONG");
+        printf("Wrong message received in trick ");
+        while (msg[ptr]!= '\r') {
+            printf("%c", msg[ptr++]);
+        }
+        printf(".\n");
+    }
+    // Print TAKEN message.
+    else if (strncmp(msg, "TAKEN", 5) == 0) {
+        printf("%s", msg);
+        int ptr = strlen("TAKEN") + (trick_num >= 10 ? 2 : 1);
+        printf("A trick %d is taken by %c, cards ", trick_num, 
+            msg[strlen(msg) - 1 - strlen("\r\n")]);
+        while (msg[ptr]!= '\r') {
+            printf("%c", msg[ptr]);
+            if(msg[ptr] == 'C' || msg[ptr] == 'D' || 
+               msg[ptr] == 'H' || msg[ptr] == 'S') {
+                if (msg[ptr + 1] != '\r') {
+                    printf(", ");
+                }
+            }
+            ptr++;
+        }
+        printf(".\n");
+    }
+    // Print SCORE message.
+    else if (strncmp(msg, "SCORE", 5) == 0) {
+        printf("%s", msg);
+        printf("The scores are:\n");
+        int ptr = strlen("SCORE");
+        for (int i = 0; i < NO_PLAYERS; i++) {
+            printf("%c | ", msg[ptr++]);
+            while (msg[ptr] >= '0' && msg[ptr] <= '9') {
+                printf("%c", msg[ptr++]);
+            }
+            printf("\n");
+        }
+    }
+    // Print TOTAL message.
+    else if (strncmp(msg, "TOTAL", 5) == 0) {
+        printf("%s", msg);
+        printf("The total scores are:\n");
+        int ptr = strlen("SCORE");
+        for (int i = 0; i < NO_PLAYERS; i++) {
+            printf("%c | ", msg[ptr++]);
+            while (msg[ptr] >= '0' && msg[ptr] <= '9') {
+                printf("%c", msg[ptr++]);
+            }
+            printf("\n");
+        }
+    }
+    // Print TRICK message.
+    else {
+        printf("%s", msg);
+        printf("Trick: (%d) ", trick_num);
+        int ptr = strlen("TRICK") + (trick_num >= 10 ? 2 : 1);
+        while (msg[ptr]!= '\r') {
+            printf("%c", msg[ptr]);
+            if(msg[ptr] == 'C' || msg[ptr] == 'D' || 
+               msg[ptr] == 'H' || msg[ptr] == 'S') {
+                if (msg[ptr + 1] != '\r') {
+                    printf(", ");
+                }
+            }
+            ptr++;
+        }
+        printf("\nAvailable: ");
+        for (int i = 0; i < NO_CARDS; i++) {
+            if (cards[i].num == 0) {
+                continue;
+            } else {
+                printf("%c", cards[i].num);
+                if (cards[i].num == '1') {
+                    printf("0");
+                }
+                printf("%c", cards[i].col);
+                if (i!= NO_CARDS - 1) {
+                    printf(", ");
+                }
+            }
+        }
+    }
+}
+
 // Function to get game data from the server.
 static int get_game_info(int socket_fd) {
     // Receiving DEAL message.
     char *msg = read_msg(socket_fd);
     int msg_len = strlen(msg);
     
-    raport(socket_fd, msg, true);
+    if (is_automatic) {
+        raport(socket_fd, msg, true);
+    }
 
     if (msg_len < 2 || msg[msg_len - 2] != '\r' || msg[msg_len - 1] != '\n') {
         free(msg);
@@ -171,12 +305,16 @@ static int get_game_info(int socket_fd) {
             game_type = msg[4];
             starting_player = msg[5];
             size_t ptr = 5;
-            for (int i = 0; i < 13; i++) {
+            for (int i = 0; i < NO_CARDS; i++) {
                 cards[i].num = msg[++ptr];
                 if (msg[ptr] == '1') {
                     ptr++;
                 }
                 cards[i].col = msg[++ptr];
+            }
+
+            if(!is_automatic) {
+                user_interface(msg);
             }
 
             return 0;
@@ -199,7 +337,9 @@ static int handshake(int socket_fd) {
     msg[strlen(msg)] = game_side;
     strcat(msg, "\r\n");
 
-    raport(socket_fd, msg, false);
+    if(is_automatic) {
+        raport(socket_fd, msg, false);
+    }
 
     ssize_t written_length = writen(socket_fd, msg, msg_len);
     if (written_length < 0) {
@@ -237,20 +377,31 @@ static void auto_play(int socket_fd) {
     bool correct_packet;
 
     // Playing out all tricks.
-    for (int t = 1; t <= 13; t++) {
+    for (int t = 1; t <= NO_CARDS; t++) {
         // Read info about the current trick.
         correct_packet = false;
         while (!correct_packet) {
             msg = read_msg(socket_fd);
             msg_len = strlen(msg);
 
-            raport(socket_fd, msg, true);
+            if (is_automatic) {
+                raport(socket_fd, msg, true);
+            }
 
             if (msg_len < 2 || msg[msg_len - 2] != '\r' || 
                 msg[msg_len - 1] != '\n') {
                 free(msg);
             } else if (strncmp(msg, "TRICK", 5) == 0) {
+                int trick_numer = msg[strlen("TRICK")] - '0';
+                if (t >= 10) {
+                    trick_numer *= 10;
+                    trick_numer += msg[strlen("TRICK") + 1] - '0';
+                }
+                if (trick_numer != t) {
+                    free(msg);
+                } else {
                 correct_packet = true;
+                }
             } else {
                 free(msg);
             }
@@ -262,10 +413,10 @@ static void auto_play(int socket_fd) {
         card_t laid_cards[3]; // Max number of cards in a trick.
         // Fill info about the cards in trick.
         int ptr = 5; // Msg after "TRICK".
-        char trick_num = msg[ptr++];
-        char trick_second_num;
+        char trick_char = msg[ptr++];
+        char trick_second_char;
         if (t >= 10) {
-            trick_second_num = msg[ptr++];
+            trick_second_char = msg[ptr++];
         }
         int card = 0;
         while (msg[ptr]!= '\r') {
@@ -279,14 +430,14 @@ static void auto_play(int socket_fd) {
         free(msg);
         
         card_t card_to_play;
-        card_to_play.num = -1;
-        card_to_play.col = -1;
+        card_to_play.num = 0;
+        card_to_play.col = 0;
         int card_id = -1;
         if (card == 0) { // No cards in the trick. We pick lowest possible card.
-            for(int i = 0; i < 13; i++) {
-                if (cards[i].num == -1) {
+            for(int i = 0; i < NO_CARDS; i++) {
+                if (cards[i].num == 0) {
                     continue;
-                } else if (card_to_play.num == -1) {
+                } else if (card_to_play.num == 0) {
                     card_to_play = cards[i];
                     card_id = i;
                 } else if (numtoi(cards[i].num) < numtoi(card_to_play.num)) {
@@ -304,8 +455,8 @@ static void auto_play(int socket_fd) {
                 }
             }
             // Chceck if we can play lower card.
-            for (int i = 0; i < 13; i++) {
-                if (cards[i].num == -1) {
+            for (int i = 0; i < NO_CARDS; i++) {
+                if (cards[i].num == 0) {
                     continue;
                 } else if (cards[i].col == highest_card.col && 
                     numtoi(cards[i].num) < numtoi(highest_card.num)) {
@@ -315,10 +466,10 @@ static void auto_play(int socket_fd) {
             }
             if (card_id == -1) {
                 // If we can't play lower card, we play the highest card.
-                for (int i = 0; i < 13; i++) {
-                    if (cards[i].num == -1) {
+                for (int i = 0; i < NO_CARDS; i++) {
+                    if (cards[i].num == 0) {
                         continue;
-                    } else if (card_to_play.num == -1) {
+                    } else if (card_to_play.num == 0) {
                         card_to_play = cards[i];
                         card_id = i;
                     } else if (numtoi(cards[i].num) > numtoi(card_to_play.num)) {
@@ -343,9 +494,9 @@ static void auto_play(int socket_fd) {
         }
         memset(msg, 0, (msg_len + 1) * sizeof(char));
         strcpy(msg, "TRICK");
-        msg[strlen(msg)] = trick_num;
+        msg[strlen(msg)] = trick_char;
         if (t >= 10) {
-            msg[strlen(msg)] = trick_second_num;
+            msg[strlen(msg)] = trick_second_char;
         }
         msg[strlen(msg)] = card_to_play.num;
         if (card_to_play.num == '1') {
@@ -354,7 +505,9 @@ static void auto_play(int socket_fd) {
         msg[strlen(msg)] = card_to_play.col;
         strcat(msg, "\r\n");
 
-        raport(socket_fd, msg, false);
+        if (is_automatic) {
+            raport(socket_fd, msg, false);
+        }
 
         ssize_t written_length = writen(socket_fd, msg, msg_len);
         if (written_length < 0) {
@@ -365,8 +518,8 @@ static void auto_play(int socket_fd) {
         }
         free(msg);
 
-        cards[card_id].num = -1;
-        cards[card_id].col = -1;
+        cards[card_id].num = 0;
+        cards[card_id].col = 0;
 
         // Receive info about who took the trick.
         correct_packet = false;
@@ -374,7 +527,9 @@ static void auto_play(int socket_fd) {
             msg = read_msg(socket_fd);
             msg_len = strlen(msg);
 
-            raport(socket_fd, msg, true);
+            if (is_automatic) {
+                raport(socket_fd, msg, true);
+            }
 
             if (msg_len < 2 || msg[msg_len - 2] != '\r' || 
                 msg[msg_len - 1] != '\n') {
@@ -388,13 +543,15 @@ static void auto_play(int socket_fd) {
         free(msg);
     }
 
-    // Receive info about who won the trick.
+    // Receive info about who won the hand.
     correct_packet = false;
     while (!correct_packet) {
         msg = read_msg(socket_fd);
         msg_len = strlen(msg);
 
-        raport(socket_fd, msg, true);
+        if (is_automatic) {
+           raport(socket_fd, msg, true);
+        }
 
         if (msg_len < 2 || msg[msg_len - 2] != '\r' || 
             msg[msg_len - 1] != '\n') {
@@ -413,7 +570,9 @@ static void auto_play(int socket_fd) {
         msg = read_msg(socket_fd);
         msg_len = strlen(msg);
 
-        raport(socket_fd, msg, true);
+        if (is_automatic) {
+           raport(socket_fd, msg, true);
+        }
 
         if (msg_len < 2 || msg[msg_len - 2] != '\r' || 
             msg[msg_len - 1] != '\n') {
@@ -427,11 +586,220 @@ static void auto_play(int socket_fd) {
     free(msg);
 }
 
-/*
-static void manual_play(int socket_fd) {
+static void handle_user_input(int socket_fd, char *msg) {
+    if (strcmp(msg, "cards")) {
+        bool first = true;
+        for (int i = 0; i < NO_CARDS; i++) {
+            if (cards[i].num == 0) {
+                continue;
+            }
+            if (!first) {
+                printf(", ");
+            }
+            first = false;
+            printf("%c", cards[i].num);
+            if (cards[i].num == '1') {
+                printf("0");
+            }
+            printf("%c", cards[i].col);
+        }
+    } else if (strcmp(msg, "tricks")) {
+        for (int i = 1; i <= NO_CARDS; i++) {
+            if (tricks[i][0].num == 0) {
+                break;
+            }
+            for (int j = 0; j < NO_PLAYERS; j++) {
+                printf("%c", tricks[i][j].num);
+                if (tricks[i][j].num == '1') {
+                    printf("0");
+                }
+                printf("%c", tricks[i][j].col);
+                if (j!= NO_CARDS - 1) {
+                    printf(", ");
+                }
+            }
+            printf("\n");
+        }
+    } else if (strncmp(msg, "!", 1) == 0) {
+        char *to_send = malloc(BUF_SIZE);
+        if (to_send == NULL) {
+            syserr("malloc");
+        }
+        memset(to_send, 0, BUF_SIZE);
+        strcat(to_send, "TRICK");
+        sprintf(to_send + strlen(to_send), "%c", trick_num);
+        int ptr = 1;
+        while (msg[ptr] != '\0') {
+            to_send[strlen(to_send)] = msg[ptr++];
+        }
+        strcat(to_send, "\r\n");
 
+        ssize_t written_length = writen(socket_fd, to_send, strlen(to_send));
+        if (written_length < 0) {
+            syserr("writen");
+        }
+        else if ((size_t) written_length != strlen(to_send)) {
+            fatal("incomplete writen");
+        }
+        free(to_send);
+
+        // Find and erase the card from the hand.
+        char card_num = msg[1];
+        char card_col = msg[strlen(msg) - 1];
+        for (int i = 0; i < NO_CARDS; i++) {
+            if (cards[i].num == card_num && cards[i].col == card_col) {
+                cards[i].num = 0;
+                cards[i].col = 0;
+                break;
+            }
+        }
+    } else {
+        printf("Unknown command\n");
+    }
 }
-*/
+
+void *user_communication() {
+    char buffer[BUF_SIZE + 1];
+    while (!is_finished) {
+        memset(buffer, 0, BUF_SIZE + 1);
+        int n = read(STDIN_FILENO, buffer, BUF_SIZE);
+        if (n < 0) {
+            error("ERROR reading from stdin");
+        }
+        if (n == 0) {
+            continue;
+        }
+        handle_user_input(sockfd, buffer);
+    }
+    return NULL;
+}
+
+void *server_communication() {
+    char *msg;
+    size_t msg_len;
+    bool correct_packet;
+
+    for (trick_num = 1; trick_num <= NO_CARDS; trick_num++) {
+        // Read info about the current trick.
+        correct_packet = false;
+        while (!correct_packet) {
+            msg = read_msg(sockfd);
+            msg_len = strlen(msg);
+
+            if (msg_len < 2 || msg[msg_len - 2] != '\r' || 
+                msg[msg_len - 1] != '\n') {
+                free(msg);
+            } else if (strncmp(msg, "TRICK", 5) == 0) {
+                int trick_numer = msg[strlen("TRICK")] - '0';
+                if (trick_num >= 10) {
+                    trick_numer *= 10;
+                    trick_numer += msg[strlen("TRICK") + 1] - '0';
+                }
+                if (trick_numer != trick_num) {
+                    free(msg);
+                } else {
+                correct_packet = true;
+                }
+            } else {
+                free(msg);
+            }
+        }
+        user_interface(msg);
+        free(msg);
+
+        correct_packet = false;
+        while (!correct_packet) {
+            msg = read_msg(sockfd);
+            msg_len = strlen(msg);
+
+            if (msg_len < 2 || msg[msg_len - 2] != '\r' || 
+                msg[msg_len - 1] != '\n') {
+                free(msg);
+            } else if (strncmp(msg, "TAKEN", 5) == 0) {
+                correct_packet = true;
+            } else {
+                free(msg);
+            }
+        }
+        user_interface(msg);
+        int ptr = strlen("TAKEN") + (trick_num >= 10 ? 2 : 1);
+        for (int i = 0; i < NO_PLAYERS; i++) {
+            tricks[trick_num][i].num = msg[ptr++];
+            if (msg[ptr] == '0') {
+                ptr++;
+            }
+            tricks[trick_num][i].col = msg[ptr++];
+        }
+        free(msg);
+    }
+
+    // Receive info about who won the hand.
+    correct_packet = false;
+    while (!correct_packet) {
+        msg = read_msg(sockfd);
+        msg_len = strlen(msg);
+
+        if (msg_len < 2 || msg[msg_len - 2] != '\r' || 
+            msg[msg_len - 1] != '\n') {
+            free(msg);
+        } else if (strncmp(msg, "SCORE", 5) == 0) {
+            correct_packet = true;
+        } else {
+            free(msg);
+        }
+    }
+    user_interface(msg);
+    free(msg); 
+
+    // Receive info about total amount of points.
+    correct_packet = false;
+    while (!correct_packet) {
+        msg = read_msg(sockfd);
+        msg_len = strlen(msg);
+
+        if (msg_len < 2 || msg[msg_len - 2] != '\r' || 
+            msg[msg_len - 1] != '\n') {
+            free(msg);
+        } else if (strncmp(msg, "TOTAL", 5) == 0) {
+            correct_packet = true;
+        } else {
+            free(msg);
+        }
+    }
+    user_interface(msg);
+    free(msg);
+    is_finished = true;
+    return NULL;
+}
+
+static void manual_play(int socket_fd) {
+    sockfd = socket_fd;
+    trick_num = 1;
+    for (int i = 0; i < NO_CARDS + 3; i++) {
+        for (int j = 0; j < NO_PLAYERS; j++) {
+            tricks[i][j].num = 0;
+            tricks[i][j].col = 0;
+        }
+    }
+    is_finished = false;
+
+    pthread_t server_thread, user_thread;
+
+    if (pthread_create(&server_thread, NULL, server_communication, NULL) != 0) {
+        error("ERROR creating server thread");
+    }
+
+    if (pthread_create(&user_thread, NULL, user_communication, NULL) != 0) {
+        error("ERROR creating user thread");
+    }
+
+    // Wait for threads to finish
+    pthread_join(server_thread, NULL);
+    pthread_join(user_thread, NULL);
+
+    return;
+}
+
 
 int main(int argc, char *argv[]) {
     parse_args(argc, argv);
@@ -441,25 +809,25 @@ int main(int argc, char *argv[]) {
     handshake(socket_fd);
 
     while (true) {
-        if (is_automatic) {
-            while (true) {
+        while (true) {
+            if (is_automatic) {
                 auto_play(socket_fd);
-
-                // Check if there is more data available.
-                char *temp = malloc(sizeof(char) * 2);
-                ssize_t read_length = recv(socket_fd, temp, 1, MSG_PEEK);
-                if (read_length < 0) {
-                    syserr("recv");
-                } else if (read_length == 0) {
-                    close(socket_fd);
-                    exit(0);
-                }
-                free(temp);
-
-                get_game_info(socket_fd);
+            } else {
+                manual_play(socket_fd);
             }
-        } else {
-            //manual_play(socket_fd);
+
+            // Check if there is more data available.
+            char *temp = malloc(sizeof(char) * 2);
+            ssize_t read_length = recv(socket_fd, temp, 1, MSG_PEEK);
+            if (read_length < 0) {
+                syserr("recv");
+            } else if (read_length == 0) {
+                close(socket_fd);
+                exit(0);
+            }
+            free(temp);
+
+            get_game_info(socket_fd);
         }
     }
 }
