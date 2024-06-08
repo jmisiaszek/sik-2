@@ -37,9 +37,9 @@ char starting_player;
 card_t cards[NO_CARDS];
 
 // Helping data for communication with user.
-int sockfd;
-int trick_num;
-card_t tricks[NO_CARDS + 3][NO_PLAYERS];
+int message_num;
+card_t tricks[NO_CARDS + 6][NO_PLAYERS];
+card_t card_played;
 bool is_finished = false;
 
 // Function to parse command line arguments.
@@ -209,8 +209,8 @@ static void user_interface(char *msg) {
     // Print TAKEN message.
     else if (strncmp(msg, "TAKEN", 5) == 0) {
         printf("%s", msg);
-        int ptr = strlen("TAKEN") + (trick_num >= 10 ? 2 : 1);
-        printf("A trick %d is taken by %c, cards ", trick_num, 
+        int ptr = strlen("TAKEN") + (message_num >= 9 ? 2 : 1);
+        printf("A trick %d is taken by %c, cards ", message_num + 1, 
             msg[strlen(msg) - 1 - strlen("\r\n")]);
         while (msg[ptr]!= '\r') {
             printf("%c", msg[ptr]);
@@ -252,9 +252,9 @@ static void user_interface(char *msg) {
     }
     // Print TRICK message.
     else {
-        printf("%s", msg);
-        printf("Trick: (%d) ", trick_num);
-        int ptr = strlen("TRICK") + (trick_num >= 10 ? 2 : 1);
+        printf("%ld %s", strlen(msg), msg);
+        printf("Trick: (%d) ", message_num + 1);
+        int ptr = strlen("TRICK") + (message_num >= 9 ? 2 : 1);
         while (msg[ptr]!= '\r') {
             printf("%c", msg[ptr]);
             if(msg[ptr] == 'C' || msg[ptr] == 'D' || 
@@ -280,6 +280,7 @@ static void user_interface(char *msg) {
                 }
             }
         }
+        printf("\n");
     }
 }
 
@@ -587,7 +588,7 @@ static void auto_play(int socket_fd) {
 }
 
 static void handle_user_input(int socket_fd, char *msg) {
-    if (strcmp(msg, "cards")) {
+    if (strcmp(msg, "cards\n") == 0) {
         bool first = true;
         for (int i = 0; i < NO_CARDS; i++) {
             if (cards[i].num == 0) {
@@ -603,8 +604,9 @@ static void handle_user_input(int socket_fd, char *msg) {
             }
             printf("%c", cards[i].col);
         }
-    } else if (strcmp(msg, "tricks")) {
-        for (int i = 1; i <= NO_CARDS; i++) {
+        printf("\n");
+    } else if (strcmp(msg, "tricks\n") == 0) {
+        for (int i = 0; i < message_num; i++) {
             if (tricks[i][0].num == 0) {
                 break;
             }
@@ -614,26 +616,40 @@ static void handle_user_input(int socket_fd, char *msg) {
                     printf("0");
                 }
                 printf("%c", tricks[i][j].col);
-                if (j!= NO_CARDS - 1) {
+                if (j < NO_PLAYERS - 1) {
                     printf(", ");
                 }
             }
             printf("\n");
         }
     } else if (strncmp(msg, "!", 1) == 0) {
-        char *to_send = malloc(BUF_SIZE);
-        if (to_send == NULL) {
-            syserr("malloc");
+        // Parse the card.
+        card_t card_to_play;
+        size_t ptr = 1;
+        card_to_play.num = msg[ptr++];
+        if (msg[ptr] == '0') {
+            ptr++;
         }
-        memset(to_send, 0, BUF_SIZE);
-        strcat(to_send, "TRICK");
-        sprintf(to_send + strlen(to_send), "%c", trick_num);
-        int ptr = 1;
-        while (msg[ptr] != '\0') {
-            to_send[strlen(to_send)] = msg[ptr++];
+        card_to_play.col = msg[ptr++];
+        if (msg[ptr] != '\n' || ptr != strlen(msg) - 1) {
+            printf("Wrong card format\n");
+            return;
         }
+        card_played.num = card_to_play.num;
+        card_played.col = card_to_play.col;
+
+        // Create the message.
+        char *to_send = malloc(BUF_SIZE * sizeof(char));
+        memset(to_send, 0, BUF_SIZE * sizeof(char));
+        strcpy(to_send, "TRICK");
+        to_send[strlen(to_send)] = card_to_play.num;
+        if (card_to_play.num == '1') {
+            to_send[strlen(to_send)] = '0';
+        }
+        to_send[strlen(to_send)] = card_to_play.col;
         strcat(to_send, "\r\n");
 
+        // Send the message.
         ssize_t written_length = writen(socket_fd, to_send, strlen(to_send));
         if (written_length < 0) {
             syserr("writen");
@@ -642,162 +658,115 @@ static void handle_user_input(int socket_fd, char *msg) {
             fatal("incomplete writen");
         }
         free(to_send);
-
-        // Find and erase the card from the hand.
-        char card_num = msg[1];
-        char card_col = msg[strlen(msg) - 1];
-        for (int i = 0; i < NO_CARDS; i++) {
-            if (cards[i].num == card_num && cards[i].col == card_col) {
-                cards[i].num = 0;
-                cards[i].col = 0;
-                break;
-            }
-        }
     } else {
         printf("Unknown command\n");
     }
 }
 
-void *user_communication() {
-    char buffer[BUF_SIZE + 1];
-    while (!is_finished) {
-        memset(buffer, 0, BUF_SIZE + 1);
-        int n = read(STDIN_FILENO, buffer, BUF_SIZE);
-        if (n < 0) {
-            error("ERROR reading from stdin");
+static void handle_server_input(char *msg) {
+    if (message_num <= 12) {
+        // We are playing out one of the tricks.
+        // We are expecting a TRICK, WRONG, or TAKEN message.
+        if (strncmp(msg, "TRICK", 5) == 0) {
+            user_interface(msg);
+        } else if (strncmp(msg, "WRONG", 5) == 0) {
+            user_interface(msg);
+            card_played.num = 0;
+            card_played.col = 0;
+        } else if (strncmp(msg, "TAKEN", 5) == 0) {
+            user_interface(msg);
+
+            // Update tricks.
+            size_t ptr = strlen("TAKEN") + (message_num >= 9 ? 2 : 1);
+            for (int i = 0; i < NO_PLAYERS; i++) {
+                tricks[message_num][i].num = msg[ptr++];
+                if (msg[ptr] == '0') {
+                    ptr++;
+                }
+                tricks[message_num][i].col = msg[ptr++];
+            }
+
+            // Update cards.
+            for (int i = 0; i < NO_CARDS; i++) {
+                if (cards[i].num == card_played.num && cards[i].col == card_played.col) {
+                    cards[i].num = 0;
+                    cards[i].col = 0;
+                    card_played.num = 0;
+                    card_played.col = 0;
+                    break;
+                }
+            }
+            message_num++;
         }
-        if (n == 0) {
-            continue;
+    } else if (message_num == 13) {
+        // We are expecting a SCORE message.
+        if (strncmp(msg, "SCORE", 5) == 0) {
+            user_interface(msg);
+            message_num++;
         }
-        handle_user_input(sockfd, buffer);
+    } else if (message_num == 14) {
+        // We are expecting a TOTAL message.
+        if (strncmp(msg, "TOTAL", 5) == 0) {
+            user_interface(msg);
+            is_finished = true;
+        }
     }
-    return NULL;
 }
 
-void *server_communication() {
-    char *msg;
-    size_t msg_len;
-    bool correct_packet;
-
-    for (trick_num = 1; trick_num <= NO_CARDS; trick_num++) {
-        // Read info about the current trick.
-        correct_packet = false;
-        while (!correct_packet) {
-            msg = read_msg(sockfd);
-            msg_len = strlen(msg);
-
-            if (msg_len < 2 || msg[msg_len - 2] != '\r' || 
-                msg[msg_len - 1] != '\n') {
-                free(msg);
-            } else if (strncmp(msg, "TRICK", 5) == 0) {
-                int trick_numer = msg[strlen("TRICK")] - '0';
-                if (trick_num >= 10) {
-                    trick_numer *= 10;
-                    trick_numer += msg[strlen("TRICK") + 1] - '0';
-                }
-                if (trick_numer != trick_num) {
-                    free(msg);
-                } else {
-                correct_packet = true;
-                }
-            } else {
-                free(msg);
-            }
-        }
-        user_interface(msg);
-        free(msg);
-
-        correct_packet = false;
-        while (!correct_packet) {
-            msg = read_msg(sockfd);
-            msg_len = strlen(msg);
-
-            if (msg_len < 2 || msg[msg_len - 2] != '\r' || 
-                msg[msg_len - 1] != '\n') {
-                free(msg);
-            } else if (strncmp(msg, "TAKEN", 5) == 0) {
-                correct_packet = true;
-            } else {
-                free(msg);
-            }
-        }
-        user_interface(msg);
-        int ptr = strlen("TAKEN") + (trick_num >= 10 ? 2 : 1);
-        for (int i = 0; i < NO_PLAYERS; i++) {
-            tricks[trick_num][i].num = msg[ptr++];
-            if (msg[ptr] == '0') {
-                ptr++;
-            }
-            tricks[trick_num][i].col = msg[ptr++];
-        }
-        free(msg);
-    }
-
-    // Receive info about who won the hand.
-    correct_packet = false;
-    while (!correct_packet) {
-        msg = read_msg(sockfd);
-        msg_len = strlen(msg);
-
-        if (msg_len < 2 || msg[msg_len - 2] != '\r' || 
-            msg[msg_len - 1] != '\n') {
-            free(msg);
-        } else if (strncmp(msg, "SCORE", 5) == 0) {
-            correct_packet = true;
-        } else {
-            free(msg);
-        }
-    }
-    user_interface(msg);
-    free(msg); 
-
-    // Receive info about total amount of points.
-    correct_packet = false;
-    while (!correct_packet) {
-        msg = read_msg(sockfd);
-        msg_len = strlen(msg);
-
-        if (msg_len < 2 || msg[msg_len - 2] != '\r' || 
-            msg[msg_len - 1] != '\n') {
-            free(msg);
-        } else if (strncmp(msg, "TOTAL", 5) == 0) {
-            correct_packet = true;
-        } else {
-            free(msg);
-        }
-    }
-    user_interface(msg);
-    free(msg);
-    is_finished = true;
-    return NULL;
-}
 
 static void manual_play(int socket_fd) {
-    sockfd = socket_fd;
-    trick_num = 1;
-    for (int i = 0; i < NO_CARDS + 3; i++) {
+    // Initialize game data.
+    message_num = 0;
+    for (int i = 0; i < NO_CARDS + 6; i++) {
         for (int j = 0; j < NO_PLAYERS; j++) {
             tricks[i][j].num = 0;
             tricks[i][j].col = 0;
         }
     }
     is_finished = false;
+    // Setting up poll
+    struct pollfd fds[2];
 
-    pthread_t server_thread, user_thread;
+    // Monitor socket for input
+    fds[0].fd = socket_fd;
+    fds[0].events = POLLIN;
 
-    if (pthread_create(&server_thread, NULL, server_communication, NULL) != 0) {
-        error("ERROR creating server thread");
+    // Monitor stdin for input
+    fds[1].fd = fileno(stdin);
+    fds[1].events = POLLIN;
+
+    char buffer[BUF_SIZE];
+
+    while (!is_finished) {
+        int ret = poll(fds, 2, -1); // Wait indefinitely for an event
+        if (ret < 0) {
+            syserr("poll");
+        }
+
+        // Check for server input
+        if (fds[0].revents & POLLIN) {
+            char *msg = read_msg(socket_fd);
+            handle_server_input(msg);
+            free(msg);
+        }
+
+        // Check for console input
+        if (fds[1].revents & POLLIN) {
+            memset(buffer, 0, BUF_SIZE);
+            if (fgets(buffer, sizeof(buffer), stdin) != NULL) {
+                handle_user_input(socket_fd, buffer);
+            } else {
+                // End of input or error
+                if (feof(stdin)) {
+                    printf("End of console input.\n");
+                    break;
+                }
+                if (ferror(stdin)) {
+                    syserr("fgets");
+                }
+            }
+        }
     }
-
-    if (pthread_create(&user_thread, NULL, user_communication, NULL) != 0) {
-        error("ERROR creating user thread");
-    }
-
-    // Wait for threads to finish
-    pthread_join(server_thread, NULL);
-    pthread_join(user_thread, NULL);
-
-    return;
 }
 
 
