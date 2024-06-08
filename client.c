@@ -10,6 +10,8 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <stdbool.h>
+#include <time.h>
+#include <sys/time.h>
 
 #define IAM_LEN 6
 #define TRICK_LEN 10
@@ -100,14 +102,62 @@ static int prepare_connection() {
     return socket_fd;
 }
 
+static void raport(int socket_fd, char *msg, bool from_server) {
+    // Get local IP address and port
+    struct sockaddr_in local_address;
+    socklen_t local_address_len = sizeof(local_address);
+    if (getsockname(socket_fd, (struct sockaddr *) &local_address, &local_address_len) == -1) {
+        syserr("getsockname");
+    }
+    char local_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &local_address.sin_addr, local_ip, sizeof(local_ip));
+    int local_port = ntohs(local_address.sin_port);
+
+    // Get server IP address and port
+    struct sockaddr_in server_address;
+    socklen_t server_address_len = sizeof(server_address);
+    if (getpeername(socket_fd, (struct sockaddr *) &server_address, &server_address_len) == -1) {
+        syserr("getpeername");
+    }
+    char server_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &server_address.sin_addr, server_ip, sizeof(server_ip));
+    int server_port = ntohs(server_address.sin_port);
+
+    // Get the current time
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+
+    // Convert it to local time representation.
+    struct tm *local_time = localtime(&tv.tv_sec);
+    if (local_time == NULL) {
+        syserr("localtime");
+    }
+
+    // Print the current date and time to string.
+    char time_str[100];
+    if (strftime(time_str, sizeof(time_str), "%Y-%m-%dT%H:%M:%S", local_time) == 0) {
+        syserr("strftime");
+    }
+
+    // Print the whole raport.
+    msg[strlen(msg) - 2] = '\0';
+    if (from_server) {
+        printf("[%s:%d,%s:%d,%s.%03ld] %s\\r\\n\n", server_ip, server_port, 
+            local_ip, local_port, time_str, tv.tv_usec / 1000, msg);
+    } else {
+        printf("[%s:%d,%s:%d,%s.%03ld] %s\\r\\n\n", local_ip, local_port, 
+            server_ip, server_port, time_str, tv.tv_usec / 1000, msg);
+    }
+    msg[strlen(msg)] = '\r';
+}
+
 // Function to get game data from the server.
 static int get_game_info(int socket_fd) {
     // Receiving DEAL message.
     char *msg = read_msg(socket_fd);
     int msg_len = strlen(msg);
     
-    // TODO: Raport.
-    printf("%s\n", msg);
+    raport(socket_fd, msg, true);
 
     if (msg_len < 2 || msg[msg_len - 2] != '\r' || msg[msg_len - 1] != '\n') {
         free(msg);
@@ -116,6 +166,7 @@ static int get_game_info(int socket_fd) {
         if (strncmp(msg, "BUSY", 4) == 0) {
             return 1;
         } else if (strncmp(msg, "DEAL", 4) == 0) {
+            
             // Fill game data.
             game_type = msg[4];
             starting_player = msg[5];
@@ -148,8 +199,7 @@ static int handshake(int socket_fd) {
     msg[strlen(msg)] = game_side;
     strcat(msg, "\r\n");
 
-    // TODO: Raport.
-    printf("%s\n", msg);
+    raport(socket_fd, msg, false);
 
     ssize_t written_length = writen(socket_fd, msg, msg_len);
     if (written_length < 0) {
@@ -194,8 +244,7 @@ static void auto_play(int socket_fd) {
             msg = read_msg(socket_fd);
             msg_len = strlen(msg);
 
-            // TODO: Raport.
-            printf("%ld %s\n", msg_len, msg);
+            raport(socket_fd, msg, true);
 
             if (msg_len < 2 || msg[msg_len - 2] != '\r' || 
                 msg[msg_len - 1] != '\n') {
@@ -305,8 +354,7 @@ static void auto_play(int socket_fd) {
         msg[strlen(msg)] = card_to_play.col;
         strcat(msg, "\r\n");
 
-        // TODO: Raport.
-        printf("%ld %s\n", msg_len, msg);
+        raport(socket_fd, msg, false);
 
         ssize_t written_length = writen(socket_fd, msg, msg_len);
         if (written_length < 0) {
@@ -326,8 +374,7 @@ static void auto_play(int socket_fd) {
             msg = read_msg(socket_fd);
             msg_len = strlen(msg);
 
-            // TODO: Raport.
-            printf("%s\n", msg);
+            raport(socket_fd, msg, true);
 
             if (msg_len < 2 || msg[msg_len - 2] != '\r' || 
                 msg[msg_len - 1] != '\n') {
@@ -347,8 +394,7 @@ static void auto_play(int socket_fd) {
         msg = read_msg(socket_fd);
         msg_len = strlen(msg);
 
-        // TODO: Raport.
-        printf("%s\n", msg);
+        raport(socket_fd, msg, true);
 
         if (msg_len < 2 || msg[msg_len - 2] != '\r' || 
             msg[msg_len - 1] != '\n') {
@@ -367,8 +413,7 @@ static void auto_play(int socket_fd) {
         msg = read_msg(socket_fd);
         msg_len = strlen(msg);
 
-        // TODO: Raport.
-        printf("%s\n", msg);
+        raport(socket_fd, msg, true);
 
         if (msg_len < 2 || msg[msg_len - 2] != '\r' || 
             msg[msg_len - 1] != '\n') {
