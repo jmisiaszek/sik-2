@@ -466,8 +466,6 @@ static int parse_trick(char *msg) {
         trick_num = trick_num * 10 + (msg[i] - '0');
     }
 
-    printf("TRICK %d %c%c\n", trick_num, num, col);
-
     // Check if the trick is valid.
     // Check if the player has a card in the color of first card.
     bool has_color = false;
@@ -510,22 +508,56 @@ static int parse_trick(char *msg) {
 
 // Function to determine who took the trick.
 static int resolve() {
-    if (game_desc[current_game].game_type == '1') {
-        char col = cards_played[current_trick][0].col;
-        char num = cards_played[current_trick][0].num;
-        int who_took = who_played[0];
-        for (int i = 1; i < NO_PLAYERS; i++) {
-            if (cards_played[current_trick][i].col == col && 
-                numtoi(cards_played[current_trick][i].num) > numtoi(num)) {
-                num = cards_played[current_trick][i].num;
-                who_took = who_played[i];
+    char col = cards_played[current_trick][0].col;
+    char num = cards_played[current_trick][0].num;
+    int who_took = who_played[0];
+    for (int i = 1; i < NO_PLAYERS; i++) {
+        if (cards_played[current_trick][i].col == col && 
+            numtoi(cards_played[current_trick][i].num) > numtoi(num)) {
+            num = cards_played[current_trick][i].num;
+            who_took = who_played[i];
+        }
+    }
+    if (game_desc[current_game].game_type == '1' || 
+        game_desc[current_game].game_type == '7') {
+        points[who_took - 1] += 1;
+    } if (game_desc[current_game].game_type == '2' || 
+        game_desc[current_game].game_type == '7') {
+        for (int i = 0; i < NO_PLAYERS; i++) {
+            if (cards_played[current_trick][i].col == 'H') {
+                points[who_took - 1] += 1;
             }
         }
-        points[who_took - 1] += 1;
-        return who_took;
-    } else {
-        return 0;
+    } if (game_desc[current_game].game_type == '3' || 
+        game_desc[current_game].game_type == '7') {
+        for (int i = 0; i < NO_PLAYERS; i++) {
+            if (cards_played[current_trick][i].num == 'Q') {
+                points[who_took - 1] += 5;
+            }
+        }
+    } if (game_desc[current_game].game_type == '4' || 
+        game_desc[current_game].game_type == '7') {
+        for (int i = 0; i < NO_PLAYERS; i++) {
+            if (cards_played[current_trick][i].num == 'J' || 
+                cards_played[current_trick][i].num == 'K') {
+                points[who_took - 1] += 2;
+            }
+        }
+    } if (game_desc[current_game].game_type == '5' || 
+        game_desc[current_game].game_type == '7') {
+        for (int i = 0; i < NO_PLAYERS; i++) {
+            if (cards_played[current_trick][i].col == 'H' && 
+                cards_played[current_trick][i].num == 'K') {
+                points[who_took - 1] += 18;
+            }
+        }
+    } if (game_desc[current_game].game_type == '6' || 
+        game_desc[current_game].game_type == '7') {
+        if (current_trick == 6 || current_trick == 12) {
+            points[who_took - 1] += 10;
+        }
     }
+    return who_took;
 }
 
 // Function to send "TAKEN" message.
