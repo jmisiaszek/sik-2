@@ -599,6 +599,13 @@ static void send_taken() {
     char num[15];
     sprintf(num, "%d", current_trick + 1);
     strcat(msg, num);
+    for (int i = 0; i < NO_PLAYERS; i++) {
+        msg[strlen(msg)] = cards_played[current_trick][i].num;
+        if (cards_played[current_trick][i].num == '1') {
+            msg[strlen(msg)] = '0';
+        }
+        msg[strlen(msg)] = cards_played[current_trick][i].col;
+    }
     if (who_took == N) {
         msg[strlen(msg)] = 'N';
     } else if (who_took == E) {
@@ -724,6 +731,7 @@ static void play() {
             for (int i = 1; i <= NO_PLAYERS; i++) {
                 if (poll_fds[i].fd != -1) {
                     if (poll_fds[i].revents & POLLIN) {
+                        poll_fds_info[i].last_activity = current_time();
                         char *msg = read_msg(poll_fds[i].fd);
                         if (msg == NULL) {
                             // Client disconnected.
@@ -806,6 +814,9 @@ static void play() {
                                 }
                             }
                         }
+                    } else if (i == current_player && 
+                        calculate_inactivity_duration(poll_fds_info[i].last_activity) > timeout) {
+                        send_trick();
                     }
                 }
             }

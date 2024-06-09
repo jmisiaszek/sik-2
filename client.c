@@ -37,7 +37,7 @@ char starting_player;
 card_t cards[NO_CARDS];
 
 // Helping data for communication with user.
-int message_num;
+int message_num; // Also a trick number.
 card_t tricks[NO_CARDS + 6][NO_PLAYERS];
 card_t card_played;
 bool is_finished = false;
@@ -210,11 +210,11 @@ static void user_interface(char *msg) {
         int ptr = strlen("TAKEN") + (message_num >= 9 ? 2 : 1);
         printf("A trick %d is taken by %c, cards ", message_num + 1, 
             msg[strlen(msg) - 1 - strlen("\r\n")]);
-        while (msg[ptr]!= '\r') {
+        while (msg[ptr + 1]!= '\r') {
             printf("%c", msg[ptr]);
             if(msg[ptr] == 'C' || msg[ptr] == 'D' || 
                msg[ptr] == 'H' || msg[ptr] == 'S') {
-                if (msg[ptr + 1] != '\r') {
+                if (msg[ptr + 2] != '\r') {
                     printf(", ");
                 }
             }
@@ -642,6 +642,9 @@ static void handle_user_input(int socket_fd, char *msg) {
         char *to_send = malloc(BUF_SIZE * sizeof(char));
         memset(to_send, 0, BUF_SIZE * sizeof(char));
         strcpy(to_send, "TRICK");
+        char num[15];
+        sprintf(num, "%d", message_num + 1);
+        strcat(to_send, num);
         to_send[strlen(to_send)] = card_to_play.num;
         if (card_to_play.num == '1') {
             to_send[strlen(to_send)] = '0';
