@@ -135,16 +135,19 @@ char *read_msg(int socket_fd) {
     memset(msg, 0, (1 + BUF_SIZE) * sizeof(char));
     int ptr = 0;
 
+    ssize_t read_length = readn(socket_fd, msg + ptr, 1);
+    ptr++;
     do {
-        ssize_t read_length = readn(socket_fd, msg + ptr, 1);
+        read_length = readn(socket_fd, msg + ptr, 1);
         if (read_length < 0) {
             syserr("readn");
         }
         else if (read_length == 0) {
-            syserr("Server closed the connection.");
+            free(msg);
+            return NULL;
         }
         ptr += read_length;
-    } while (ptr < BUF_SIZE && msg[ptr - 1]!= '\n');
+    } while (ptr < BUF_SIZE && msg[ptr - 1]!= '\n' && msg[ptr - 2]!= '\r');
 
     return msg;
 }

@@ -108,8 +108,6 @@ static int prepare_connection() {
         syserr("cannot connect to the server");
     }
 
-    /*DEBUG*/printf("connected to %s:%" PRIu16 "\n", hostname, port);
-
     return socket_fd;
 }
 
@@ -299,7 +297,7 @@ static int get_game_info(int socket_fd) {
         return get_game_info(socket_fd);
     } else {
         if (strncmp(msg, "BUSY", 4) == 0) {
-            return 1;
+            exit(1);
         } else if (strncmp(msg, "DEAL", 4) == 0) {
             
             // Fill game data.
@@ -760,8 +758,7 @@ static void manual_play(int socket_fd) {
             } else {
                 // End of input or error
                 if (feof(stdin)) {
-                    printf("End of console input.\n");
-                    break;
+                    fatal("End of console input.");
                 }
                 if (ferror(stdin)) {
                     syserr("fgets");
@@ -780,26 +777,24 @@ int main(int argc, char *argv[]) {
     handshake(socket_fd);
 
     while (true) {
-        while (true) {
-            if (is_automatic) {
-                auto_play(socket_fd);
-            } else {
-                manual_play(socket_fd);
-            }
-
-            // Check if there is more data available.
-            char *temp = malloc(sizeof(char) * 2);
-            ssize_t read_length = recv(socket_fd, temp, 1, MSG_PEEK);
-            if (read_length < 0) {
-                syserr("recv");
-            } else if (read_length == 0) {
-                free(temp);
-                close(socket_fd);
-                exit(0);
-            }
-            free(temp);
-
-            get_game_info(socket_fd);
+        if (is_automatic) {
+            auto_play(socket_fd);
+        } else {
+            manual_play(socket_fd);
         }
+
+        // Check if there is more data available.
+        char *temp = malloc(sizeof(char) * 2);
+        ssize_t read_length = recv(socket_fd, temp, 1, MSG_PEEK);
+        if (read_length < 0) {
+            syserr("recv");
+        } else if (read_length == 0) {
+            free(temp);
+            close(socket_fd);
+            exit(0);
+        }
+        free(temp);
+
+        get_game_info(socket_fd);
     }
 }
