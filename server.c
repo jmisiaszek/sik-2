@@ -261,6 +261,114 @@ static void raport(int socket_fd, char *msg, bool from_client) {
     msg[strlen(msg)] = '\r';
 }
 
+// Function to determine who took the trick.
+static int resolve(int trick_num) {
+    char col = cards_played[trick_num][0].col;
+    char num = cards_played[trick_num][0].num;
+    int who_took = who_played[0];
+    for (int i = 1; i < NO_PLAYERS; i++) {
+        if (cards_played[trick_num][i].col == col && 
+            numtoi(cards_played[trick_num][i].num) > numtoi(num)) {
+            num = cards_played[trick_num][i].num;
+            who_took = who_played[i];
+        }
+    }
+    if (game_desc[current_game].game_type == '1' || 
+        game_desc[current_game].game_type == '7') {
+        points[who_took - 1] += 1;
+    } if (game_desc[current_game].game_type == '2' || 
+        game_desc[current_game].game_type == '7') {
+        for (int i = 0; i < NO_PLAYERS; i++) {
+            if (cards_played[trick_num][i].col == 'H') {
+                points[who_took - 1] += 1;
+            }
+        }
+    } if (game_desc[current_game].game_type == '3' || 
+        game_desc[current_game].game_type == '7') {
+        for (int i = 0; i < NO_PLAYERS; i++) {
+            if (cards_played[trick_num][i].num == 'Q') {
+                points[who_took - 1] += 5;
+            }
+        }
+    } if (game_desc[current_game].game_type == '4' || 
+        game_desc[current_game].game_type == '7') {
+        for (int i = 0; i < NO_PLAYERS; i++) {
+            if (cards_played[trick_num][i].num == 'J' || 
+                cards_played[trick_num][i].num == 'K') {
+                points[who_took - 1] += 2;
+            }
+        }
+    } if (game_desc[current_game].game_type == '5' || 
+        game_desc[current_game].game_type == '7') {
+        for (int i = 0; i < NO_PLAYERS; i++) {
+            if (cards_played[trick_num][i].col == 'H' && 
+                cards_played[trick_num][i].num == 'K') {
+                points[who_took - 1] += 18;
+            }
+        }
+    } if (game_desc[current_game].game_type == '6' || 
+        game_desc[current_game].game_type == '7') {
+        if (trick_num == 6 || trick_num == 12) {
+            points[who_took - 1] += 10;
+        }
+    }
+    return who_took;
+}
+
+// Function to send information about ongoing game.
+static void send_game_info(int client_fd, int place_id) {
+    // Send game data.
+    char *msg = malloc(BUF_SIZE * sizeof(char));
+    memset(msg, 0, BUF_SIZE * sizeof(char));
+    strcat(msg, "DEAL");
+    msg[strlen(msg)] = game_desc[current_game].game_type;
+    msg[strlen(msg)] = game_desc[current_game].starting_player;
+    for (int i = 0; i < NO_TRICKS; i++) {
+        msg[strlen(msg)] = game_desc[current_game].cards[place_id - 1][i].num;
+        if (game_desc[current_game].cards[place_id - 1][i].num == '1') {
+            msg[strlen(msg)] = '0';
+        }
+        msg[strlen(msg)] = game_desc[current_game].cards[place_id - 1][i].col;
+    }
+    strcat(msg, "\r\n");
+
+    raport(client_fd, msg, false);
+
+    ssize_t written_length = writen(client_fd, msg, strlen(msg));
+    if (written_length < 0) {
+        syserr("writen");
+    }
+    else if ((size_t) written_length != strlen(msg)) {
+        fatal("incomplete writen");
+    }
+
+    for (int i = 0; i < NO_TRICKS; i++) {
+        if (cards_played[i][NO_PLAYERS - 1].num == 0) {
+            break;
+        }
+        memset(msg, 0, BUF_SIZE * sizeof(char));
+
+        int who_took = resolve(i);
+        strcat(msg, "TAKEN");
+        char num[15];
+        sprintf(num, "%d", i + 1);
+        strcat(msg, num);
+        if (who_took == N) {
+            msg[strlen(msg)] = 'N';
+        } else if (who_took == E) {
+            msg[strlen(msg)] = 'E';
+        } else if (who_took == S) {
+            msg[strlen(msg)] = 'S';
+        } else {
+            msg[strlen(msg)] = 'W';
+        }
+        strcat(msg, "\r\n");
+
+    }
+
+    free(msg);
+}
+
 // Function to check if a place for player is free.
 static int check_for_place(int client_fd, char place) {
     int place_id;
@@ -309,31 +417,7 @@ static int check_for_place(int client_fd, char place) {
         poll_fds_info[place_id].fd = client_fd;
         poll_fds_info[place_id].last_activity = current_time();
 
-        // Send game data.
-        char *msg = malloc(BUF_SIZE * sizeof(char));
-        memset(msg, 0, BUF_SIZE * sizeof(char));
-        strcat(msg, "DEAL");
-        msg[strlen(msg)] = game_desc[current_game].game_type;
-        msg[strlen(msg)] = game_desc[current_game].starting_player;
-        for (int i = 0; i < NO_TRICKS; i++) {
-            msg[strlen(msg)] = game_desc[current_game].cards[place_id - 1][i].num;
-            if (game_desc[current_game].cards[place_id - 1][i].num == '1') {
-                msg[strlen(msg)] = '0';
-            }
-            msg[strlen(msg)] = game_desc[current_game].cards[place_id - 1][i].col;
-        }
-        strcat(msg, "\r\n");
-
-        raport(client_fd, msg, false);
-
-        ssize_t written_length = writen(client_fd, msg, strlen(msg));
-        if (written_length < 0) {
-            syserr("writen");
-        }
-        else if ((size_t) written_length != strlen(msg)) {
-            fatal("incomplete writen");
-        }
-        free(msg);
+        send_game_info(client_fd, place_id);
         ready_players++;
         return 0;
     }
@@ -506,63 +590,9 @@ static int parse_trick(char *msg) {
     }
 }
 
-// Function to determine who took the trick.
-static int resolve() {
-    char col = cards_played[current_trick][0].col;
-    char num = cards_played[current_trick][0].num;
-    int who_took = who_played[0];
-    for (int i = 1; i < NO_PLAYERS; i++) {
-        if (cards_played[current_trick][i].col == col && 
-            numtoi(cards_played[current_trick][i].num) > numtoi(num)) {
-            num = cards_played[current_trick][i].num;
-            who_took = who_played[i];
-        }
-    }
-    if (game_desc[current_game].game_type == '1' || 
-        game_desc[current_game].game_type == '7') {
-        points[who_took - 1] += 1;
-    } if (game_desc[current_game].game_type == '2' || 
-        game_desc[current_game].game_type == '7') {
-        for (int i = 0; i < NO_PLAYERS; i++) {
-            if (cards_played[current_trick][i].col == 'H') {
-                points[who_took - 1] += 1;
-            }
-        }
-    } if (game_desc[current_game].game_type == '3' || 
-        game_desc[current_game].game_type == '7') {
-        for (int i = 0; i < NO_PLAYERS; i++) {
-            if (cards_played[current_trick][i].num == 'Q') {
-                points[who_took - 1] += 5;
-            }
-        }
-    } if (game_desc[current_game].game_type == '4' || 
-        game_desc[current_game].game_type == '7') {
-        for (int i = 0; i < NO_PLAYERS; i++) {
-            if (cards_played[current_trick][i].num == 'J' || 
-                cards_played[current_trick][i].num == 'K') {
-                points[who_took - 1] += 2;
-            }
-        }
-    } if (game_desc[current_game].game_type == '5' || 
-        game_desc[current_game].game_type == '7') {
-        for (int i = 0; i < NO_PLAYERS; i++) {
-            if (cards_played[current_trick][i].col == 'H' && 
-                cards_played[current_trick][i].num == 'K') {
-                points[who_took - 1] += 18;
-            }
-        }
-    } if (game_desc[current_game].game_type == '6' || 
-        game_desc[current_game].game_type == '7') {
-        if (current_trick == 6 || current_trick == 12) {
-            points[who_took - 1] += 10;
-        }
-    }
-    return who_took;
-}
-
 // Function to send "TAKEN" message.
 static void send_taken() {
-    int who_took = resolve();
+    int who_took = resolve(current_trick);
     char *msg = malloc(BUF_SIZE * sizeof(char));
     memset(msg, 0, BUF_SIZE * sizeof(char));
     strcat(msg, "TAKEN");
